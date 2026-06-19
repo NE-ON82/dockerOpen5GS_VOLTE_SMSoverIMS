@@ -1,0 +1,20 @@
+.env
+*.csv
+sim*
+*sim_kart*
+*.log
+mysql/
+log/
+secret/
+.DS_Store
+data/
+
+# Kriptografik anahtarlar (kullanıcı kendi üretmeli)
+udm/*.key
+*.key
+*.pem
+
+# Kriptografik anahtarlar (kullanıcı kendi üretmeli)
+udm/*.key
+*.key
+*.pem
