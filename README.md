@@ -16,7 +16,19 @@ Bu yapılandırma, bir USRP B210 ve programlanabilir SIM kartlarla kapalı devre
 
 ## 3. Adım Adım Kurulum
 
-### Bağımlılıkların Kurulması
+### Hızlı Başlangıç (Tek Komutla Kurulum)
+Sıfırdan tam çalışan bir VoLTE sistemi kurmak için `install.sh` scriptini kullanabilirsiniz. Bu script donanım gereksinimlerini, docker container'larını ve ayarları otomatik yapılandırır.
+```bash
+git clone <bu-repo-url>
+cd <bu-repo>
+./install.sh
+./scripts/abone_ekle.sh --imsi <IMSI> --ki <KI> --opc <OPC> --msisdn <MSISDN>
+./scripts/volte start
+```
+
+---
+
+### Bağımlılıkların Kurulması (Manuel)
 Sisteminizde Docker ve UHD sürücülerinin kurulu olduğundan emin olun:
 ```bash
 sudo apt update
@@ -50,13 +62,32 @@ sudo docker compose -f 4g-volte-deploy.yaml up -d
 ```
 Bu komut, Open5GS çekirdek ağ bileşenlerini, Kamailio IMS sistemini, HSS ve SMSC'yi başlatır.
 
-### Abone Ekleme (HSS + pyHSS)
-Abonelerinizi web arayüzünden (`http://<DOCKER_HOST_IP>:9999`) ekleyin:
-1. IMSI, Ki, OPc değerlerini girin.
-2. VoLTE için gerekli APN'leri (`internet`, `ims`) ekleyin.
-3. SMS çalışması için **MSISDN** alanını mutlaka doldurun.
+### Abone Ekleme (Detaylı Bilgi ve HSS + pyHSS Mantığı)
+Sistemin mimarisinde **İKİ AYRI HSS** bulunmaktadır ve VoLTE+SMS çalışması için abonenin **her ikisine de** kaydedilmesi zorunludur:
 
-Ayrıca `pyhss` üzerinden de ilgili yönlendirmeleri sağlamak üzere `pyhss_init.sh` script'ini çalıştırın veya ilgili REST API ile aboneleri pyHSS veritabanına işleyin.
+1. **WebUI (Open5GS HSS) - EPC ve Attach için:** `http://<DOCKER_HOST_IP>:9999` üzerinden eklenir. Telefonun 4G ağına (EPC) attach olması ve internete çıkması için şarttır. Burada IMSI, Ki, OPc, APN (internet + ims) ve MSISDN tanımlanır.
+2. **pyHSS (IMS HSS) - VoLTE ve SMS için:** `http://<DOCKER_HOST_IP>:8080/docs` REST API'si üzerinden 5 ayrı adımda (APN, AUC, Subscriber, IMS_Subscriber) provisioning yapılır. Bu adım eksik olursa S-CSCF kaydı gerçekleşmez ve VoLTE çalışmaz. Özellikle `ims_subscriber` adımında `default_ifc.xml` belirtilmesi I-CSCF ve S-CSCF yönlendirmesi için kritiktir.
+
+> **KOLAY YOL (ÖNERİLEN):** Manuel olarak her iki veritabanına ekleme yapmak yerine hazırladığımız `abone_ekle.sh` scriptini kullanarak tek komutla bu işlemi hatasız gerçekleştirebilirsiniz:
+> ```bash
+> ./scripts/abone_ekle.sh --imsi <IMSI> --ki <KI> --opc <OPC> --msisdn <MSISDN>
+> ```
+
+---
+
+## 3.1 Script Kullanımı ve Yönetim Araçları
+Bu repo, sistemin yönetimini kolaylaştırmak için aşağıdaki scriptleri içerir:
+
+- `./install.sh` : Sıfırdan donanım/yazılım bağımlılıkları dahil tam kurulum sağlar.
+- `./tara_kur.sh` : Önceden var olan ancak VoLTE yapılandırması eksik olan mevcut Open5GS klasörünü tarar ve gerekli VoLTE+SMS yapılandırmalarını yedekleyerek ekler.
+- `./scripts/volte` : Sistem durumunu kontrol etmek ve başlatıp durdurmak için kullanılan CLI'dır.
+  - `./scripts/volte start` : EPC ve eNB radyosunu başlatır.
+  - `./scripts/volte stop` : eNB radyosunu durdurur.
+  - `./scripts/volte stop --all` : Tüm sistemi (çekirdek dahil) durdurur.
+  - `./scripts/volte status` : Container durumlarını gösterir.
+  - `./scripts/volte corestatus` : Sadece çekirdek+IMS bileşenlerinin (mme, amf, pcscf, scscf, pyhss, smsc vb.) detaylı sağlık durumunu gösterir.
+- `./scripts/abone_ekle.sh` : Yukarıda anlatıldığı gibi EPC ve IMS'e aynı anda abone ekler.
+- `./scripts/plmn.sh` : Sistemin mevcut PLMN (MCC/MNC) bilgilerini değiştirmek için kullanılır. (--mcc ve --mnc parametreleri alır).
 
 ### eNB'nin Başlatılması
 Radyoyu ayağa kaldırmak için srsENB'yi çalıştırın:

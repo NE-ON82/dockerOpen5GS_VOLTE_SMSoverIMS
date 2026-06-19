@@ -1,147 +1,41 @@
 #!/usr/bin/env bash
-# volte — VoLTE test ağı abone yönetim CLI'ı.
-# EPC (open5gs/MongoDB) + IMS (pyHSS) abonelerini birlikte yönetir.
+# volte — VoLTE test ağı yönetim CLI'ı.
 #
-#   ./volte add subscriber --imsi <I> --ki <K> --opc <O> --msisdn <M>
-#   ./volte del subscriber --imsi <I>
-#   ./volte list subscribers
-#   ./volte check --imsi <I>
+# Kullanım:
+#   ./volte start                  (EPC + eNB başlatır)
+#   ./volte stop [--all]           (Sadece eNB durdurur, --all tüm yığını durdurur)
+#   ./volte restart                (eNB'yi yeniden başlatır)
+#   ./volte status                 (Çalışan servisleri gösterir)
+#   ./volte corestatus             (IMS ve Çekirdek bileşenlerinin detaylı durumu)
+#   ./volte enable-boot            (Çekirdeği kalıcı yapar)
 #
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=lib/ayarlar.sh
 source "${SCRIPT_DIR}/lib/ayarlar.sh"
-# shellcheck source=lib/pyhss_api.sh
-source "${SCRIPT_DIR}/lib/pyhss_api.sh"
-# shellcheck source=lib/webui_api.sh
-source "${SCRIPT_DIR}/lib/webui_api.sh"
-# shellcheck source=lib/servis.sh
 source "${SCRIPT_DIR}/lib/servis.sh"
-# shellcheck source=lib/plmn.sh
-source "${SCRIPT_DIR}/lib/plmn.sh"
 
 kullanim() {
   cat <<EOF
-volte — VoLTE abone yönetimi (EPC + IMS)
+volte — VoLTE Yönetim CLI
 
 Kullanım:
-  volte add subscriber --imsi <IMSI> --ki <KI> --opc <OPC> --msisdn <MSISDN> [--amf <AMF>] [--sqn <SQN>]
-  volte del subscriber --imsi <IMSI>
-  volte list subscribers
-  volte check --imsi <IMSI>
+  ./volte start                  (EPC + eNB başlatır)
+  ./volte stop [--all]           (Sadece eNB durdurur, --all tüm yığını durdurur)
+  ./volte restart                (eNB'yi yeniden başlatır)
+  ./volte status                 (Çalışan servisleri gösterir)
+  ./volte corestatus             (IMS ve Çekirdek detaylı durumu)
+  ./volte enable-boot            (Çekirdeği kalıcı yapar)
   
-  volte start                  (EPC + eNB başlatır)
-  volte stop [--all]           (Sadece eNB durdurur, --all tüm yığını durdurur)
-  volte restart                (eNB'yi yeniden başlatır)
-  volte status                 (Çalışan servisleri gösterir)
-  volte enable-boot            (Çekirdeği kalıcı yapar)
-  
-  volte create plmn --mcc <M> --mnc <N> [--dry-run]
-
-Örnek:
-  volte add subscriber --imsi 001010000000001 \\
-    --ki 0BDEB2CB463A5A5A29307A73F4FA0A86 \\
-    --opc 19D7004F5D2C16EB68968F90A082556C \\
-    --msisdn 0010000000001
-
-Ayarlar: ${SCRIPT_DIR}/lib/ayarlar.sh (HOST_IP, PLMN, scscf, MONGO_CONTAINER...)
+Not: Abone işlemleri için './abone_ekle.sh' scriptini kullanın.
+PLMN işlemleri için './plmn.sh' scriptini kullanın.
 EOF
-}
-
-# --- argüman ayrıştırma ---
-ARG_IMSI=""; ARG_KI=""; ARG_OPC=""; ARG_MSISDN=""; ARG_AMF=""; ARG_SQN=""
-_parse_flags() {
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --imsi)   ARG_IMSI="$2"; shift 2;;
-      --ki)     ARG_KI="$2"; shift 2;;
-      --opc)    ARG_OPC="$2"; shift 2;;
-      --msisdn) ARG_MSISDN="$2"; shift 2;;
-      --amf)    ARG_AMF="$2"; shift 2;;
-      --sqn)    ARG_SQN="$2"; shift 2;;
-      *) c_err "Bilinmeyen argüman: $1"; return 1;;
-    esac
-  done
-}
-
-_gerekli() {
-  local eksik=0
-  for v in "$@"; do
-    case "$v" in
-      imsi)   [ -z "$ARG_IMSI" ]   && { c_err "--imsi gerekli"; eksik=1; };;
-      ki)     [ -z "$ARG_KI" ]     && { c_err "--ki gerekli"; eksik=1; };;
-      opc)    [ -z "$ARG_OPC" ]    && { c_err "--opc gerekli"; eksik=1; };;
-      msisdn) [ -z "$ARG_MSISDN" ] && { c_err "--msisdn gerekli"; eksik=1; };;
-    esac
-  done
-  [ "$eksik" = 0 ]
-}
-
-cmd_add() {
-  _parse_flags "$@" || exit 1
-  _gerekli imsi ki opc msisdn || exit 1
-  [ -n "$ARG_AMF" ] && DEFAULT_AMF="$ARG_AMF"
-  [ -n "$ARG_SQN" ] && DEFAULT_SQN="$ARG_SQN"
-
-  c_info "Abone ekleniyor: ${ARG_IMSI} (MSISDN ${ARG_MSISDN})"
-
-  c_info "1/2 — EPC (open5gs / MongoDB)..."
-  webui_saglik || exit 1
-  webui_abone_ekle "$ARG_IMSI" "$ARG_KI" "$ARG_OPC" "$ARG_MSISDN" || exit 1
-
-  c_info "2/2 — IMS (pyHSS)..."
-  pyhss_saglik || exit 1
-  pyhss_kart_ekle "$ARG_IMSI" "$ARG_KI" "$ARG_OPC" "$ARG_MSISDN" || exit 1
-
-  c_ok "Abone ${ARG_IMSI} hem EPC hem IMS'e eklendi."
-  c_info "Telefonu uçak modu aç-kapa yap, sonra: ./volte check --imsi ${ARG_IMSI}"
-}
-
-cmd_del() {
-  _parse_flags "$@" || exit 1
-  _gerekli imsi || exit 1
-  c_warn "Abone siliniyor: ${ARG_IMSI} (EPC + IMS)"
-  webui_abone_sil "$ARG_IMSI" || true
-  # pyHSS tarafı
-  pyhss_kart_sil "$ARG_IMSI" || true
-}
-
-cmd_list() {
-  c_info "EPC aboneleri (open5gs / MongoDB):"
-  webui_abone_listele || c_warn "MongoDB listelenemedi"
-  echo
-  c_info "IMS abonelerini görmek için: ${PYHSS_URL}/docs/ (subscriber/ims_subscriber GET)"
-}
-
-cmd_check() {
-  _parse_flags "$@" || exit 1
-  _gerekli imsi || exit 1
-  local imsi="$ARG_IMSI"
-  echo "=== ATTACH (mme) ==="
-  sudo docker logs --tail 40 mme 2>&1 | grep -iE "${imsi}|Attach complete|Invalid APN" | tail -8 || true
-  echo
-  echo "=== I-CSCF server_name (pyHSS eksikse görünür) ==="
-  sudo docker logs --tail 40 icscf 2>&1 | grep -i "Failed finding avp" | tail -3 || echo "(temiz)"
-  echo
-  echo "=== REGISTER (scscf) ==="
-  sudo docker logs --tail 120 scscf 2>&1 | grep -iE "${imsi}|Auth succeeded|registered" | tail -8 || true
 }
 
 main() {
   [ $# -eq 0 ] && { kullanim; exit 0; }
   local sub="$1"; shift || true
   case "$sub" in
-    add)
-      [ "${1:-}" = "subscriber" ] && shift
-      cmd_add "$@";;
-    del|delete|rm)
-      [ "${1:-}" = "subscriber" ] && shift
-      cmd_del "$@";;
-    list|ls)
-      cmd_list;;
-    check)
-      cmd_check "$@";;
     start)
       servis_start;;
     stop)
@@ -150,28 +44,12 @@ main() {
       servis_restart;;
     status)
       servis_status;;
+    corestatus)
+      servis_corestatus;;
     enable-boot)
       servis_enable_boot;;
     disable-boot)
       servis_disable_boot;;
-    create)
-      if [ "${1:-}" = "plmn" ]; then
-        shift
-        local arg_mcc="" arg_mnc="" dry_run=0
-        while [ $# -gt 0 ]; do
-          case "$1" in
-            --mcc) arg_mcc="$2"; shift 2;;
-            --mnc) arg_mnc="$2"; shift 2;;
-            --dry-run) dry_run=1; shift 1;;
-            *) c_err "Bilinmeyen: $1"; return 1;;
-          esac
-        done
-        [ -z "$arg_mcc" ] || [ -z "$arg_mnc" ] && { c_err "--mcc ve --mnc zorunludur"; exit 1; }
-        plmn_create "$arg_mcc" "$arg_mnc" "$dry_run"
-      else
-        c_err "create için 'plmn' bekleniyor (volte create plmn)"; exit 1
-      fi
-      ;;
     -h|--help|help)
       kullanim;;
     *)

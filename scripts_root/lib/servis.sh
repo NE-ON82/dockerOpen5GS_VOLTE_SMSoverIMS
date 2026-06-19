@@ -1,13 +1,22 @@
 #!/usr/bin/env bash
 # servis.sh — VoLTE yığınını (EPC+IMS) ve eNB yayınını yönetir.
-# 'volte start/stop/status/corestatus/restart' bunları kullanır.
+# 'volte start/stop/status/restart' bunları kullanır.
 #
 # Tasarım:
 #   - EPC+IMS çekirdeği: PC kapansa/yeniden başlasa da ayakta kalmalı.
 #     Bunu 'restart: unless-stopped' politikası sağlar (volte enable-boot ile eklenir).
 #   - eNB (yayın): RF açıp kapatmak istersin → start/stop eNB'yi yönetir.
+#
+# Kullanım (CLI üzerinden):
+#   volte start            → çekirdek (yoksa) + eNB başlat
+#   volte stop             → sadece eNB'yi durdur (yayını kes, çekirdek ayakta)
+#   volte stop --all       → her şeyi durdur (çekirdek dahil)
+#   volte status           → ne çalışıyor
+#   volte restart          → eNB'yi yeniden başlat
+#   volte enable-boot      → çekirdek container'larına restart:unless-stopped ekle
 
 _compose() {
+  # compose dosyasında docker compose çalıştırır. $1=dosya, gerisi=komut
   local file="$1"; shift
   ( cd "${OPEN5GS_DIR}" && sudo docker compose -f "${file}" "$@" )
 }
@@ -16,10 +25,12 @@ _calisan_container() {
   sudo docker ps --format '{{.Names}}' 2>/dev/null
 }
 
+# --- Çekirdek (EPC+IMS) çalışıyor mu? (mme'yi gösterge al) ---
 cekirdek_calisiyor_mu() {
   _calisan_container | grep -qx "mme"
 }
 
+# --- eNB çalışıyor mu? ---
 enb_calisiyor_mu() {
   _calisan_container | grep -qx "srsenb"
 }
@@ -27,7 +38,7 @@ enb_calisiyor_mu() {
 servis_start() {
   c_info "VoLTE yığını başlatılıyor..."
 
-  # 1. Çekirdek
+  # 1. Çekirdek (EPC+IMS) — yoksa kaldır
   if cekirdek_calisiyor_mu; then
     c_ok "Çekirdek (EPC+IMS) zaten çalışıyor"
   else
@@ -41,7 +52,7 @@ servis_start() {
     fi
   fi
 
-  # 2. eNB
+  # 2. eNB (yayın)
   if enb_calisiyor_mu; then
     c_ok "eNB zaten yayında"
   else
@@ -90,24 +101,10 @@ servis_status() {
     grep -iE "NAME|mme|hss|pcscf|icscf|scscf|pyhss|rtpengine|mongo|sgw|smf|upf|pgw|srsenb" || true
 }
 
-servis_corestatus() {
-  echo "════════ Çekirdek (EPC + IMS) Detaylı Durum ════════"
-  local bilesenler="mme amf pcscf icscf scscf pyhss smsc upf"
-  local calisanlar; calisanlar=$(sudo docker ps --format '{{.Names}}\t{{.Status}}' || true)
-  
-  for s in $bilesenler; do
-    local durum; durum=$(echo "$calisanlar" | grep -iE "^${s}\b" || true)
-    if echo "$durum" | grep -qi "Up"; then
-      c_ok "  $s: Up"
-    elif [ -n "$durum" ]; then
-      c_warn "  $s: $durum (Down / Restarting)"
-    else
-      c_err "  $s: Container bulunamadı veya çalışmıyor"
-    fi
-  done
-  echo "════════════════════════════════════════════════════"
-}
-
+# --- Kalıcılık: restart politikası ---
+# PC reboot sonrası container'lar kendiliğinden gelsin diye 'unless-stopped' ekler.
+# Compose dosyalarındaki her servise restart politikası eklemek yerine, çalışan
+# container'lara docker update ile uygular (en güvenli, dosyaya dokunmaz).
 servis_enable_boot() {
   c_info "Çalışan container'lara restart=unless-stopped uygulanıyor..."
   local names; names=$(_calisan_container)
@@ -118,6 +115,9 @@ servis_enable_boot() {
       && c_ok "  $n → unless-stopped" || c_warn "  $n güncellenemedi"
   done
   c_ok "Tamam. Artık PC yeniden başlasa da bu container'lar kendiliğinden gelir."
+  c_info "Docker servisi de boot'ta açık olmalı: sudo systemctl enable docker"
+  c_warn "NOT: eNB'yi (srsenb) boot'ta otomatik AÇMAK genelde istenmez (USRP/RF)."
+  c_warn "     eNB için restart eklemek istersen: sudo docker update --restart unless-stopped srsenb"
 }
 
 servis_disable_boot() {

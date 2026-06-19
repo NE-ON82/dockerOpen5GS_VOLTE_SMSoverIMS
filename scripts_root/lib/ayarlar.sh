@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # ayarlar.sh — Merkezi yapılandırma. Tüm script'ler bunu source eder.
+# Ortamına göre düzenle. Hiçbir sır (Ki/OPc) burada TUTULMAZ — onlar CLI'dan gelir.
 
-: "${HOST_IP:=192.168.1.100}"          # Open5GS host IP
+# --- Host / Ağ ---
+: "${HOST_IP:=192.168.23.6}"          # Open5GS host IP
 : "${WEBUI_URL:=http://${HOST_IP}:9999}"
 : "${WEBUI_USER:=admin}"
 : "${WEBUI_PASS:=1423}"
 : "${PYHSS_URL:=http://${HOST_IP}:8080}"
 
+# --- PLMN ---
 : "${MCC:=001}"
 : "${MNC:=01}"
 : "${IMS_DOMAIN:=ims.mnc${MNC}.mcc${MCC}.3gppnetwork.org}"
@@ -14,9 +17,8 @@
 : "${SCSCF_URI:=sip:${SCSCF_HOST}:6060}"
 
 # --- Proje dizini (docker_open5gs) ---
-# OPEN5GS_DIR bu reponun kendi dizini olacak şekilde ayarlandı.
-SCRIPT_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-: "${OPEN5GS_DIR:=$(dirname "$(dirname "${SCRIPT_LIB_DIR}")")}"
+# Kullanıcının gerçek yolu; tara_kur.sh otomatik bulmayı dener.
+: "${OPEN5GS_DIR:=/home/mobsec/docker_open5gs}"
 
 # --- Gerçek Sistem Dosya Yolları (PLMN/Servis) ---
 : "${MME_CONF:=${OPEN5GS_DIR}/mme/mme.yaml}"
@@ -38,10 +40,12 @@ SCRIPT_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${DEFAULT_AMF:=8000}"
 : "${DEFAULT_SQN:=0}"
 
+# --- Renkli çıktı yardımcıları ---
 c_ok()   { printf '\033[0;32m[✓]\033[0m %s\n' "$*"; }
 c_warn() { printf '\033[0;33m[!]\033[0m %s\n' "$*"; }
 c_err()  { printf '\033[0;31m[✗]\033[0m %s\n' "$*" >&2; }
 c_info() { printf '\033[0;36m[i]\033[0m %s\n' "$*"; }
 
+# curl yoksa erken uyar
 command -v curl >/dev/null 2>&1 || { c_err "curl gerekli ama bulunamadı"; }
 command -v jq   >/dev/null 2>&1 || c_warn "jq yok — JSON ayrıştırma sınırlı olur (önerilir: apt install jq)"
